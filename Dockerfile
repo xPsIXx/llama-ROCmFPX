@@ -37,9 +37,20 @@ WORKDIR /src/llama.cpp
 # gfx1201 = RX 9070 / 9070 XT. Vulkan-only build: the build stage has no ROCm
 # SDK (HIP compilation needs hipcc), and the host runs Vulkan — enable Vulkan,
 # leave HIP off entirely.
+#
+# Portability: GGML_NATIVE defaults ON -> -march=native, tuning for GitHub's
+# runner CPU (AVX-512/F16C), which crashes the Unraid host with
+# 'Illegal instruction'. Force it OFF and baseline SIMD so the binary runs on
+# any x86-64 host. Vulkan does the GPU compute, so the CPU baseline tradeoff
+# is acceptable.
 RUN cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DBUILD_SHARED_LIBS=OFF \
+      -DGGML_NATIVE=OFF \
+      -DGGML_AVX=OFF \
+      -DGGML_AVX2=OFF \
+      -DGGML_F16C=OFF \
+      -DGGML_FMA=OFF \
       -DGGML_VULKAN=ON \
       -DGGML_HIP=OFF \
       -DGGML_CUDA=OFF \
