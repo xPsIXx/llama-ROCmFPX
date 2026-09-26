@@ -8,10 +8,12 @@ if [ ! -d "$OUTPUT_DIR" ]; then
     exit 1
 fi
 
-echo "Copying llama-server to $OUTPUT_DIR/llama-server"
-cp /usr/local/bin/llama-server "$OUTPUT_DIR/llama-server"
-chmod +x "$OUTPUT_DIR/llama-server"
+echo "Copying llama binaries to $OUTPUT_DIR/"
+cp /usr/local/bin/llama-server    "$OUTPUT_DIR/llama-server"
+cp /usr/local/bin/llama-cli       "$OUTPUT_DIR/llama-cli"
+cp /usr/local/bin/llama-quantize  "$OUTPUT_DIR/llama-quantize"
+chmod +x "$OUTPUT_DIR/llama-server" "$OUTPUT_DIR/llama-cli" "$OUTPUT_DIR/llama-quantize"
 
-echo "Done. llmama-server binary placed at $OUTPUT_DIR/llama-server"
-echo "Built from ArtomYuan/llama.cpp-rocm commit:"
+echo "Done. Binaries placed at $OUTPUT_DIR/"
+echo "Built from charlie12345/ROCmFPX commit:"
 /usr/local/bin/llama-server --version 2>&1 || true

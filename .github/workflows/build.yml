@@ -4,9 +4,14 @@ on:
   push:
     branches: [main]
   schedule:
-    # Weekly rebuild to pick up upstream changes
+    # Weekly fallback rebuild to pick up upstream changes.
     - cron: '0 6 * * 1'
   workflow_dispatch:
+  # Rebuild whenever the canonical upstream fork (charlie12345/ROCmFPX) gets
+  # a new commit on its main branch. 'charlie12345/ROCmFPX' is a GitHub repo
+  # so this event fires natively; no polling cron needed.
+  repository_dispatch:
+    types: [upstream-changed]
 
 env:
   REGISTRY: ghcr.io
@@ -15,6 +20,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4

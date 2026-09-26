@@ -1,52 +1,68 @@
-# llama-ROCmFPX Builder
-# Builds the latest ArtomYuan/llama.cpp-rocm fork with ROCm/HIP support
-# and outputs the llama-server binary.
+# llama-ROCmFPX Builder — charlie12345/ROCmFPX (Vulkan + HIP)
+# Builds llama-server/llama-quantize from the canonical upstream fork and
+# outputs the binaries via a shared volume for llama-swap.
+#
+# WHY VULKAN: the Unraid host has no ROCm userspace (/opt/rocm* empty) and the
+# existing llama-swap stack uses the Vulkan backend. Vulkan runs on the exposed
+# /dev/dri path and was the fastest decode backend in upstream's own tests.
+# We enable BOTH GGML_VULKAN and GGML_HIP so the bake gives us both in case a
+# future ROCm runtime is added: build stage sets -DGGML_VULKAN=ON (Vulkan loads
+# without any ROCm install) and -DGGML_HIP=ON (HIP kernels compiled for gfx1201,
+# but only usable if a ROCm runtime is present). Vulkan is the primary path.
 
-ARG ROCM_VERSION=7.2.1
 ARG UBUNTU_VERSION=24.04
 
-FROM docker.io/rocm/dev-ubuntu-${UBUNTU_VERSION}:${ROCM_VERSION}-complete AS build
+# Build stage: needs cmake + Vulkan toolchain (glslang/glslc for shader compile).
+# ROCm dev image NOT used — keep the toolchain lean; Vulkan needs no ROCm SDK.
+FROM ubuntu:${UBUNTU_VERSION} AS build
 
-ARG AMDGPU_TARGETS="gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1102;gfx1151;gfx1150;gfx1200;gfx1201"
+ENV DEBIAN_FRONTEND=noninteractive
 
-SHELL ["/bin/bash", "-c"]
-
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    git \
-    libssl-dev \
-    curl \
-    libgomp1 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git ca-certificates curl \
+      libvulkan-dev glslang-tools libglm-dev ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 
-# Clone the latest upstream source
-RUN git clone https://github.com/ArtomYuan/llama.cpp-rocm.git . \
+# Clone the canonical upstream fork (main branch), not a downstream re-pack.
+RUN git clone https://github.com/charlie12345/ROCmFPX.git llama.cpp \
+    && cd llama.cpp && git checkout main \
     && git log -1 --format="%H %s"
 
-# Build with HIP
-RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
-    cmake -S . -B build \
-        -DGGML_HIP=ON \
-        -DAMDGPU_TARGETS="${AMDGPU_TARGETS}" \
-        -DGGML_BACKEND_DL=ON \
-        -DGGML_CPU_ALL_VARIANTS=ON \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DLLAMA_BUILD_TESTS=OFF \
-        -DLLAMA_BUILD_EXAMPLES=OFF \
-        -DLLAMA_BUILD_SERVER=ON \
-    && cmake --build build --config Release -j$(nproc) --target llama-server
+WORKDIR /src/llama.cpp
 
-# Minimal runtime image
+# Match upstream's own build-rocmfp4.sh flags (Vulkan on, server on).
+# gfx1201 = RX 9070 / 9070 XT. No CUDA, webui/tests off to slim the build.
+RUN cmake -S . -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DGGML_VULKAN=ON \
+      -DGGML_HIP=ON \
+      -DGGML_HIP_ROCWMMA_FATTN=OFF \
+      -DGGML_HIP_FORCE_MMQ=ON \
+      -DGGML_CUDA=OFF \
+      -DCMAKE_HIP_ARCHITECTURES=gfx1201 \
+      -DGPU_TARGETS=gfx1201 \
+      -DLLAMA_BUILD_SERVER=ON \
+      -DLLAMA_BUILD_WEBUI=OFF \
+      -DLLAMA_USE_PREBUILT_WEBUI=OFF \
+      -DLLAMA_BUILD_TESTS=OFF \
+      -DGGML_BUILD_TESTS=OFF \
+      -DCMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
+    && cmake --build build --config Release --target llama-server llama-cli llama-quantize -j $(nproc)
+
+# Runtime image: Vulkan loader + mesa radeon driver for /dev/dri.
 FROM ubuntu:${UBUNTU_VERSION} AS runtime
 
-RUN apt-get update && apt-get install -y \
-    libgomp1 \
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libvulkan1 libgl1-mesa-dri mesa-vulkan-drivers libgomp1 libstdc++6 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /src/build/bin/llama-server /usr/local/bin/llama-server
+COPY --from=build /src/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
+COPY --from=build /src/llama.cpp/build/bin/llama-cli     /usr/local/bin/llama-cli
+COPY --from=build /src/llama.cpp/build/bin/llama-quantize /usr/local/bin/llama-quantize
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
