@@ -40,17 +40,16 @@ WORKDIR /src/llama.cpp
 #
 # Portability: GGML_NATIVE defaults ON -> -march=native, tuning for GitHub's
 # runner CPU (AVX-512/F16C), which crashes the Unraid host with
-# 'Illegal instruction'. Force it OFF and baseline SIMD so the binary runs on
-# any x86-64 host. Vulkan does the GPU compute, so the CPU baseline tradeoff
-# is acceptable.
+# 'Illegal instruction'. Force it OFF. To still get host-tuned CPU speed we
+# enable GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS so every CPU instruction
+# variant (SSE/AVX/AVX2/AVX512) is compiled and the best one is selected at
+# runtime via cpuid — near-native speed on any host, no single fixed -march.
 RUN cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DBUILD_SHARED_LIBS=OFF \
       -DGGML_NATIVE=OFF \
-      -DGGML_AVX=OFF \
-      -DGGML_AVX2=OFF \
-      -DGGML_F16C=OFF \
-      -DGGML_FMA=OFF \
+      -DGGML_BACKEND_DL=ON \
+      -DGGML_CPU_ALL_VARIANTS=ON \
       -DGGML_VULKAN=ON \
       -DGGML_HIP=OFF \
       -DGGML_CUDA=OFF \
@@ -71,9 +70,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libvulkan1 libgl1-mesa-dri mesa-vulkan-drivers libgomp1 libstdc++6 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /src/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
-COPY --from=build /src/llama.cpp/build/bin/llama-cli     /usr/local/bin/llama-cli
-COPY --from=build /src/llama.cpp/build/bin/llama-quantize /usr/local/bin/llama-quantize
+# Copy the whole build/bin so the binary's dynamically-loaded backend modules
+# (ggml-cpu-*.so variants, ggml-vulkan.so) ship alongside it.
+COPY --from=build /src/llama.cpp/build/bin/. /usr/local/bin/
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

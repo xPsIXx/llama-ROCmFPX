@@ -33,6 +33,10 @@ what the existing llama-swap stack already runs.
    - `QUANT_BIN`   — filename for llama-quantize (default `llama-rocmfpx-quantize`)
    - Defaults use a `rocmfpx` suffix so the built `llama-server` never overwrites
      llama-swap's own stock `/app/llama-server` when both share a mount.
+   - The entrypoint also copies the dlopen'd backend modules (`ggml-*.so` — the
+     CPU instruction variants and the Vulkan backend) into the same folder, so
+     the renamed binary finds them at runtime. Point llama-swap's `cmd:` at the
+     `SERVER_BIN` name as usual; keep the `.so` files next to it in the folder.
 4. Run once — it copies the binaries to the mounted path and exits
 
 From Unraid CLI:

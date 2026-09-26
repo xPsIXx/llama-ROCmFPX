@@ -15,7 +15,7 @@ if [ ! -d "$OUTPUT_DIR" ]; then
     exit 1
 fi
 
-echo "== Copying built binaries into $OUTPUT_DIR =="
+echo "== Copying built binaries + backend modules into $OUTPUT_DIR =="
 
 copy_file() {
     local src="$1"   # source path inside this container
@@ -48,6 +48,21 @@ copy_file() {
 copy_file /usr/local/bin/llama-server   "$OUTPUT_DIR/$SERVER_BIN"
 copy_file /usr/local/bin/llama-cli      "$OUTPUT_DIR/$CLI_BIN"
 copy_file /usr/local/bin/llama-quantize "$OUTPUT_DIR/$QUANT_BIN"
+
+# ggml backends are dlopen()'d at runtime and must sit next to the binary.
+# Copy every *.so* module (ggml-cpu-*.so variants, ggml-vulkan.so, etc.).
+echo
+echo "-- backend/runtime modules (*.so) --"
+copied_any=0
+for so in /usr/local/bin/*.so*; do
+    [ -e "$so" ] || continue
+    base="$(basename "$so")"
+    copy_file "$so" "$OUTPUT_DIR/$base"
+    copied_any=1
+done
+if [ "$copied_any" = "0" ]; then
+    echo "(no *.so modules found — everything statically linked)"
+fi
 
 echo
 echo "== Done. Files present in $OUTPUT_DIR: =="
