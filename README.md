@@ -1,13 +1,15 @@
 # llama-ROCmFPX Builder
 
 Builds the canonical [charlie12345/ROCmFPX](https://github.com/charlie12345/ROCmFPX)
-fork with a **Vulkan** backend for AMD GPUs, and outputs `llama-server` /
+fork with a **Vulkan** backend for AMD GPUs, and outputs `llama-server`,
+`llama-cli`, and `llama-quantize` to a folder of your choosing via a shared
+volume that llama-swap reads.
 
-This will build and place the binary in folder of your choosing. 
-This supports my use of llama-swap so i can direct specific models to use this llama-server through the config.
-`llama-cli` / `llama-quantize` to a shared volume that llama-swap reads.
-This is the upstream-minded build: Vulkan needs no ROCm userspace on the host,
-which is what the existing llama-swap stack runs.
+This supports my llama-swap setup: each built binary gets its own name, so I
+can point specific models at this custom llama-server through the llama-swap
+config without overwriting the stock `/app/llama-server`. It's the
+upstream-minded build — Vulkan needs no ROCm userspace on the host, which is
+what the existing llama-swap stack already runs.
 
 ## Why Vulkan
 
