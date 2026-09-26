@@ -39,6 +39,7 @@ WORKDIR /src/llama.cpp
 # leave HIP off entirely.
 RUN cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_SHARED_LIBS=OFF \
       -DGGML_VULKAN=ON \
       -DGGML_HIP=OFF \
       -DGGML_CUDA=OFF \
