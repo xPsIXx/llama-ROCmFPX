@@ -15,15 +15,43 @@ if [ ! -d "$OUTPUT_DIR" ]; then
     exit 1
 fi
 
-echo "Copying binaries to $OUTPUT_DIR/"
-cp /usr/local/bin/llama-server   "$OUTPUT_DIR/$SERVER_BIN"
-cp /usr/local/bin/llama-cli      "$OUTPUT_DIR/$CLI_BIN"
-cp /usr/local/bin/llama-quantize "$OUTPUT_DIR/$QUANT_BIN"
-chmod +x "$OUTPUT_DIR/$SERVER_BIN" "$OUTPUT_DIR/$CLI_BIN" "$OUTPUT_DIR/$QUANT_BIN"
+echo "== Copying built binaries into $OUTPUT_DIR =="
 
-echo "Done. Binaries placed at $OUTPUT_DIR/:"
-echo "  server  -> $SERVER_BIN"
-echo "  cli     -> $CLI_BIN"
-echo "  quantize-> $QUANT_BIN"
+copy_file() {
+    local src="$1"   # source path inside this container
+    local dst="$2"   # full destination path
+
+    if [ ! -f "$src" ]; then
+        echo "ERROR: source missing: $src"
+        exit 1
+    fi
+
+    local src_size
+    src_size="$(stat -c %s "$src" 2>/dev/null || echo "?")"
+
+    if [ -f "$dst" ]; then
+        # Overwriting an existing file: report old vs new size
+        local old_size
+        old_size="$(stat -c %s "$dst" 2>/dev/null || echo "?")"
+        echo "OVERWRITE: $dst"
+        echo "    old: $old_size bytes"
+        echo "    new: $src_size bytes (from $src)"
+        cp -f "$src" "$dst"
+    else
+        echo "CREATE: $dst  ($src_size bytes, from $src)"
+        cp "$src" "$dst"
+    fi
+
+    chmod +x "$dst"
+}
+
+copy_file /usr/local/bin/llama-server   "$OUTPUT_DIR/$SERVER_BIN"
+copy_file /usr/local/bin/llama-cli      "$OUTPUT_DIR/$CLI_BIN"
+copy_file /usr/local/bin/llama-quantize "$OUTPUT_DIR/$QUANT_BIN"
+
+echo
+echo "== Done. Files present in $OUTPUT_DIR: =="
+ls -la "$OUTPUT_DIR"
+echo
 echo "Built from charlie12345/ROCmFPX commit:"
 /usr/local/bin/llama-server --version 2>&1 || true
