@@ -1,6 +1,6 @@
-# llama-ROCmFPX Builder — charlie12345/ROCmFPX (Vulkan + HIP)
-# Builds llama-server/llama-quantize from the canonical upstream fork and
-# outputs the binaries via a shared volume for llama-swap.
+# llama-ROCmFPX Builder — charlie12345/ROCmFPX (Vulkan backend)
+# Builds llama-server/llama-cli/llama-quantize from the canonical upstream fork
+# and outputs the binaries via a shared volume for llama-swap.
 #
 # WHY VULKAN: the Unraid host has no ROCm userspace (/opt/rocm* empty) and the
 # existing llama-swap stack uses the Vulkan backend. Vulkan runs on the exposed
@@ -21,7 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential cmake git ca-certificates curl \
       libvulkan-dev glslang-tools libglm-dev ninja-build \
-      shaderc libshaderc-dev \
+      glslc libshaderc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
