@@ -21,8 +21,16 @@ which is what the existing llama-swap stack runs.
 ### On Unraid
 
 1. Create a container from `ghcr.io/xpsixx/llama-rocmfpx:latest`
-2. Add a volume mount: `/mnt/user/AI/llama-swap/bin` → `/output`
-3. Set env var `OUTPUT_DIR=/output`
+2. Add a volume mount so the built binaries land where llama-swap can read them —
+   e.g. a host path shared with the llama-swap container, or directly onto
+   llama-swap's `/app` via a bind mount.
+3. Set env vars:
+   - `OUTPUT_DIR` — destination directory (default `/output`)
+   - `SERVER_BIN`  — filename for the built llama-server (default `llama-rocmfpx-server`)
+   - `CLI_BIN`     — filename for llama-cli (default `llama-rocmfpx-cli`)
+   - `QUANT_BIN`   — filename for llama-quantize (default `llama-rocmfpx-quantize`)
+   - Defaults use a `rocmfpx` suffix so the built `llama-server` never overwrites
+     llama-swap's own stock `/app/llama-server` when both share a mount.
 4. Run once — it copies the binaries to the mounted path and exits
 
 From Unraid CLI:
@@ -38,14 +46,15 @@ docker run --rm \
 
 ### In llama-swap config.yaml
 
-Point a model's `cmd` at the mounted binary (llama-swap spawns `llama-server`
-from the path you give it):
+Point a model's `cmd` at the built binary (llama-swap spawns it from the path
+you give it — use the `SERVER_BIN` name from above). If you bind-mounted the
+built binary onto llama-swap's `/app/llama-rocmfpx-server`:
 
 ```yaml
 models:
   "your-model":
     cmd: |
-      /mnt/user/AI/llama-swap/bin/llama-server --port ${PORT}
+      /app/llama-rocmfpx-server --port ${PORT}
       --model /path/to/model.gguf
       --ctx-size 32768
 ```
