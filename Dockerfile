@@ -5,10 +5,10 @@
 # WHY VULKAN: the Unraid host has no ROCm userspace (/opt/rocm* empty) and the
 # existing llama-swap stack uses the Vulkan backend. Vulkan runs on the exposed
 # /dev/dri path and was the fastest decode backend in upstream's own tests.
-# We enable BOTH GGML_VULKAN and GGML_HIP so the bake gives us both in case a
-# future ROCm runtime is added: build stage sets -DGGML_VULKAN=ON (Vulkan loads
-# without any ROCm install) and -DGGML_HIP=ON (HIP kernels compiled for gfx1201,
-# but only usable if a ROCm runtime is present). Vulkan is the primary path.
+# This is a VULKAN-ONLY build: the build stage ships no ROCm SDK (HIP compilation
+# needs hipcc), and the host has no ROCm runtime anyway. If you later add a ROCm
+# runtime to the host you'd switch the build base to a rocm/dev image and flip
+# GGML_HIP=ON with CMAKE_HIP_ARCHITECTURES=gfx1201.
 
 ARG UBUNTU_VERSION=24.04
 
@@ -33,16 +33,14 @@ RUN git clone https://github.com/charlie12345/ROCmFPX.git llama.cpp \
 WORKDIR /src/llama.cpp
 
 # Match upstream's own build-rocmfp4.sh flags (Vulkan on, server on).
-# gfx1201 = RX 9070 / 9070 XT. No CUDA, webui/tests off to slim the build.
+# gfx1201 = RX 9070 / 9070 XT. Vulkan-only build: the build stage has no ROCm
+# SDK (HIP compilation needs hipcc), and the host runs Vulkan — enable Vulkan,
+# leave HIP off entirely.
 RUN cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DGGML_VULKAN=ON \
-      -DGGML_HIP=ON \
-      -DGGML_HIP_ROCWMMA_FATTN=OFF \
-      -DGGML_HIP_FORCE_MMQ=ON \
+      -DGGML_HIP=OFF \
       -DGGML_CUDA=OFF \
-      -DCMAKE_HIP_ARCHITECTURES=gfx1201 \
-      -DGPU_TARGETS=gfx1201 \
       -DLLAMA_BUILD_SERVER=ON \
       -DLLAMA_BUILD_WEBUI=OFF \
       -DLLAMA_USE_PREBUILT_WEBUI=OFF \

@@ -1,11 +1,10 @@
 # llama-ROCmFPX Builder
 
 Builds the canonical [charlie12345/ROCmFPX](https://github.com/charlie12345/ROCmFPX)
-fork with **Vulkan** (primary) + **HIP** (gfx1201) support for AMD GPUs, and
-outputs `llama-server` / `llama-cli` / `llama-quantize` to a shared volume that
-llama-swap reads. Comments aside, this is the upstream-minded build: Vulkan
-needs no ROCm userspace on the host, which is what the existing llama-swap
-stack runs.
+fork with a **Vulkan** backend for AMD GPUs, and outputs `llama-server` /
+`llama-cli` / `llama-quantize` to a shared volume that llama-swap reads.
+This is the upstream-minded build: Vulkan needs no ROCm userspace on the host,
+which is what the existing llama-swap stack runs.
 
 ## Why Vulkan
 
@@ -69,8 +68,8 @@ docker run --rm \
   `upstream-changed` event (so you can fire one on upstream commits), and
   weekly via cron as a fallback.
 - The **Dockerfile** clones `charlie12345/ROCmFPX`, builds `llama-server`
-  with `-DGGML_VULKAN=ON` (and `-DGGML_HIP=ON` targeting gfx1201). The build
-  stage is a plain Ubuntu + Vulkan toolchain — **no ROCm SDK needed**.
+  with `-DGGML_VULKAN=ON` (Vulkan-only, no ROCm SDK needed at build or runtime).
+  The build stage is a plain Ubuntu + Vulkan toolchain.
 - The **entrypoint** copies the binaries to `$OUTPUT_DIR` and exits.
-- Built GPU target: **gfx1201** (RX 9070 / 9070 XT). Change `Dockerfile`
-  `CMAKE_HIP_ARCHITECTURES` if you want a different one.
+- Built backend: **Vulkan**, which runs on the host's `/dev/dri` with the Mesa
+  radeon driver — no AMDGPU compute install required.
