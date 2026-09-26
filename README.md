@@ -91,3 +91,8 @@ docker run --rm \
 - The **entrypoint** copies the binaries to `$OUTPUT_DIR` and exits.
 - Built backend: **Vulkan**, which runs on the host's `/dev/dri` with the Mesa
   radeon driver — no AMDGPU compute install required.
+- **CPU tuning:** the build is pinned to the host CPU — an **AMD Ryzen 7 5700X
+  (Zen 3 / Vermeer)** — by enabling `GGML_AVX`/`GGML_AVX2`/`GGML_F16C`/`GGML_FMA`
+  and disabling `GGML_NATIVE` (see `Dockerfile`). This bakes in the fastest safe
+  code path for that chip with no `Illegal instruction` risk. ⚠️ **If you change
+  the host CPU, update those flags in the `Dockerfile` before rebuilding.**

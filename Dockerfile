@@ -40,16 +40,19 @@ WORKDIR /src/llama.cpp
 #
 # Portability: GGML_NATIVE defaults ON -> -march=native, tuning for GitHub's
 # runner CPU (AVX-512/F16C), which crashes the Unraid host with
-# 'Illegal instruction'. Force it OFF. To still get host-tuned CPU speed we
-# enable GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS so every CPU instruction
-# variant (SSE/AVX/AVX2/AVX512) is compiled and the best one is selected at
-# runtime via cpuid — near-native speed on any host, no single fixed -march.
+# 'Illegal instruction'. Force it OFF and set the CPU instruction flags
+# explicitly for the target host: AMD Ryzen 7 5700X (Zen 3 / Vermeer),
+# which supports AVX2 + FMA + F16C but NOT AVX-512. Enabling exactly these
+# bakes in the fastest safe code path for that chip and cannot produce an
+# 'Illegal instruction' on it. If the host CPU changes, edit these flags.
 RUN cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DBUILD_SHARED_LIBS=OFF \
       -DGGML_NATIVE=OFF \
-      -DGGML_BACKEND_DL=ON \
-      -DGGML_CPU_ALL_VARIANTS=ON \
+      -DGGML_AVX=ON \
+      -DGGML_AVX2=ON \
+      -DGGML_F16C=ON \
+      -DGGML_FMA=ON \
       -DGGML_VULKAN=ON \
       -DGGML_HIP=OFF \
       -DGGML_CUDA=OFF \
