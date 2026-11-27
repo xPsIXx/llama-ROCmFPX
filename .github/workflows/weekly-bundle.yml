@@ -133,21 +133,19 @@ jobs:
         if: steps.gate.outputs.build == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_DISPLAY: ${{ steps.rel.outputs.tag }}
         run: |
           set -euo pipefail
           ASSET="${{ steps.rel.outputs.asset }}"
-          REL="${{ steps.rel.outputs.release }}"
           if gh release view "$ASSET" >/dev/null 2>&1; then
             gh release upload "$ASSET" "${ASSET}.tar.gz" "${ASSET}.tar.gz.sha256" --clobber
           else
             gh release create "$ASSET" \
               "${ASSET}.tar.gz" "${ASSET}.tar.gz.sha256" \
               --title "RDNA bundle ${RELEASE_DISPLAY}" \
-              --notes "$(cat bundle/manifest.json | head -40)" \
+              --notes "$(head -40 bundle/manifest.json)" \
               --prerelease
           fi
-        env:
-          RELEASE_DISPLAY: ${{ steps.rel.outputs.tag }}
 
       - name: Summary
         run: |
