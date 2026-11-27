@@ -52,6 +52,20 @@ jobs:
           sudo docker image prune -af || true
           df -h /
 
+      # The ROCm image unpacks to ~22 GB. The runner's / is only ~14 GB free, but
+      # /mnt has ~60 GB — move Docker's data root there before pulling.
+      - name: Relocate Docker data root
+        run: |
+          set -eux
+          if [ -d /mnt ] && [ "$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)" -gt 40 ]; then
+            sudo systemctl stop docker || sudo service docker stop || true
+            sudo mkdir -p /mnt/docker
+            echo '{"data-root":"/mnt/docker"}' | sudo tee /etc/docker/daemon.json
+            sudo systemctl start docker || sudo service docker start
+          fi
+          docker info --format 'DockerRootDir={{.DockerRootDir}}'
+          df -h / /mnt
+
       - name: Resolve upstream release
         id: rel
         run: |
