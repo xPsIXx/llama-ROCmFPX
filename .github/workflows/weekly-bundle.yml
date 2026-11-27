@@ -92,7 +92,13 @@ jobs:
       - name: Skip if this release is already published
         id: gate
         run: |
-          if gh release view "$ASSET" >/dev/null 2>&1 && [ "${{ github.event.inputs.force }}" != "true" ]; then
+          # A push means extract.sh / verify.sh / this workflow changed, so the
+          # bundle must be rebuilt and the release asset refreshed even though one
+          # already exists. Schedule runs skip when there is nothing new upstream.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "triggered by push: rebuilding $ASSET"
+          elif gh release view "$ASSET" >/dev/null 2>&1 && [ "${{ github.event.inputs.force }}" != "true" ]; then
             echo "build=false" >> "$GITHUB_OUTPUT"
             echo "release $ASSET already published — nothing to do"
           else
