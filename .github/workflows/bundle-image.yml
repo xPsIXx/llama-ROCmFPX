@@ -4,7 +4,7 @@ name: Bundle carrier image
 # GHCR. Running the image with a bind mount copies the patched llama.cpp + ROCm
 # runtime onto that mount, which is how llama-swap gets the HIP build without a
 # second ROCm container — the same delivery pattern as the old llama-ROCmFPX
-# image that dropped statically-linked llama-server binaries into a mount.
+# image that dropped compiled llama-server binaries into a mount.
 
 on:
   schedule:
@@ -42,7 +42,6 @@ env:
   ROCM_LINE: ${{ github.event.inputs.rocm_line || '10.2' }}
   GFX: ${{ github.event.inputs.gfx || 'gfx1201' }}
   FORCED_RELEASE: ${{ github.event.inputs.release || '' }}
-  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   image:
@@ -61,10 +60,30 @@ jobs:
             REL=$(curl -fsSL https://raw.githubusercontent.com/stew675/llama-cpp-rdna-boosts/main/release.json \
                   | python3 -c 'import json,sys; print(json.load(sys.stdin)["release"])')
           fi
-          ASSET="rdna-boosts-${GFX}-rocm${ROCM_LINE}-${REL}"
-          echo "release=$REL"  >> "$GITHUB_OUTPUT"
-          echo "asset=$ASSET"  >> "$GITHUB_OUTPUT"
-          echo "resolved $ASSET"
+          echo "release=$REL" >> "$GITHUB_OUTPUT"
+          echo "asset=rdna-boosts-${GFX}-rocm${ROCM_LINE}-${REL}" >> "$GITHUB_OUTPUT"
+          echo "resolved rdna-boosts-${GFX}-rocm${ROCM_LINE}-${REL}"
+
+      # GHCR rejects uppercase in an image reference and github.repository keeps
+      # the owner's real casing (Owner/Repo), so normalise once, here.
+      - name: Compute image tags
+        id: img
+        run: |
+          set -euo pipefail
+          NAME="ghcr.io/$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          REL="${{ steps.rel.outputs.release }}"
+          echo "IMAGE=$NAME" >> "$GITHUB_ENV"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=${NAME}:rdna-${REL}" >> "$GITHUB_OUTPUT"
+          # multi-line output MUST use the delimiter form or GITHUB_OUTPUT breaks
+          {
+            echo "tags<<TAGS_EOF"
+            echo "${NAME}:rdna-${REL}"
+            echo "${NAME}:rdna-latest"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "pinned: ${NAME}:rdna-${REL}"
+          echo "moving: ${NAME}:rdna-latest"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -77,12 +96,12 @@ jobs:
         id: gate
         run: |
           set +e
-          docker buildx imagetools inspect "${IMAGE}:rdna-${{ steps.rel.outputs.release }}" >/dev/null 2>&1
+          docker buildx imagetools inspect "${{ steps.img.outputs.tag }}" >/dev/null 2>&1
           EXISTS=$?
           set -e
           if [ "$EXISTS" -eq 0 ] && [ "${{ github.event.inputs.force }}" != "true" ]; then
             echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "image tag rdna-${{ steps.rel.outputs.release }} already published — nothing to do"
+            echo "${{ steps.img.outputs.tag }} already published — nothing to do"
           else
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
@@ -95,7 +114,7 @@ jobs:
           BASE="https://github.com/${{ github.repository }}/releases/download/${ASSET}"
           TARBALL="${ASSET}.tar.gz"
           # keep the asset's real filename: the published .sha256 lists that name,
-          # so any rename here breaks `sha256sum -c`
+          # so renaming the download breaks `sha256sum -c`
           if curl -fsSL -o "$TARBALL" "$BASE/$TARBALL"; then
             echo "downloaded $TARBALL ($(du -h "$TARBALL" | cut -f1))"
             if curl -fsSL -o "${TARBALL}.sha256" "$BASE/${TARBALL}.sha256"; then
@@ -128,9 +147,7 @@ jobs:
           context: .
           file: Dockerfile.bundle
           push: true
-          tags: |
-            ${{ env.IMAGE }}:rdna-${{ steps.rel.outputs.release }}
-            ${{ env.IMAGE }}:rdna-latest
+          tags: ${{ steps.img.outputs.tags }}
           labels: |
             org.opencontainers.image.title=llama.cpp + ROCm bundle (rdna-boosts)
             org.opencontainers.image.description=Run once with a bind mount to copy the HIP llama.cpp build onto it
@@ -143,9 +160,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/out
-          docker run --rm -v /tmp/out:/output "${IMAGE}:rdna-${{ steps.rel.outputs.release }}"
+          docker run --rm -v /tmp/out:/output "${{ steps.img.outputs.tag }}"
           [ -x /tmp/out/app/llama-server ] || { echo "entrypoint did not deliver llama-server"; exit 1; }
-          ls /tmp/out
           du -sh /tmp/out
           echo "entrypoint delivered the bundle onto the mount"
 
@@ -156,6 +172,6 @@ jobs:
             echo ""
             echo "- bundle release: \`${{ steps.rel.outputs.release }}\`"
             echo "- ISA / ROCm: \`${GFX}\` / \`${ROCM_LINE}\`"
-            echo "- image: \`${IMAGE}:rdna-${{ steps.rel.outputs.release }}\`"
+            echo "- image: \`${{ steps.img.outputs.tag }}\`"
             echo "- built: ${{ steps.gate.outputs.build }}"
           } >> "$GITHUB_STEP_SUMMARY"
