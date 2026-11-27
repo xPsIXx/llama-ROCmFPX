@@ -92,26 +92,29 @@ jobs:
         run: |
           set -euo pipefail
           ASSET="${{ steps.rel.outputs.asset }}"
-          URL="https://github.com/${{ github.repository }}/releases/download/${ASSET}/${ASSET}.tar.gz"
-          if curl -fsSL -o bundle.tar.gz "$URL"; then
-            curl -fsSL -o bundle.tar.gz.sha256 "$URL.sha256" || true
-            if [ -s bundle.tar.gz.sha256 ]; then
-              sha256sum -c bundle.tar.gz.sha256 || { echo "checksum mismatch"; exit 1; }
+          BASE="https://github.com/${{ github.repository }}/releases/download/${ASSET}"
+          TARBALL="${ASSET}.tar.gz"
+          # keep the asset's real filename: the published .sha256 lists that name,
+          # so any rename here breaks `sha256sum -c`
+          if curl -fsSL -o "$TARBALL" "$BASE/$TARBALL"; then
+            echo "downloaded $TARBALL ($(du -h "$TARBALL" | cut -f1))"
+            if curl -fsSL -o "${TARBALL}.sha256" "$BASE/${TARBALL}.sha256"; then
+              cat "${TARBALL}.sha256"
+              sha256sum -c "${TARBALL}.sha256"
+            else
+              echo "WARNING: no .sha256 asset published; skipping verification"
             fi
-            echo "downloaded prebuilt bundle from the release"
+            tar -xzf "$TARBALL"
           else
             echo "no release asset yet — extracting from the upstream image instead"
             docker pull "ghcr.io/stew675/llama-cpp-rdna-boosts:server-rocm-${ROCM_LINE}-${{ steps.rel.outputs.release }}" >/dev/null
             ROCM_LINE="$ROCM_LINE" GFX="$GFX" RELEASE="${{ steps.rel.outputs.release }}" OUT=bundle ./extract.sh
-            tar -czf bundle.tar.gz bundle
           fi
-          mkdir -p bundle
-          tar -xzf bundle.tar.gz
           # tolerate archives that contain a leading ./bundle/ directory
-          if [ ! -x bundle/app/llama-server ] && [ -x ./bundle/bundle/app/llama-server ]; then
-            mv ./bundle/bundle/* ./bundle/
+          if [ ! -x bundle/app/llama-server ] && [ -x bundle/bundle/app/llama-server ]; then
+            mv bundle/bundle/* bundle/
           fi
-          [ -x bundle/app/llama-server ] || { echo "llama-server missing from bundle"; exit 1; }
+          [ -x bundle/app/llama-server ] || { echo "llama-server missing from bundle"; find bundle -maxdepth 3 | head -30; exit 1; }
           du -sh bundle
           cat bundle/manifest.json
 
