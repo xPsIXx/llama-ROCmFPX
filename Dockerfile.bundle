@@ -1,0 +1,22 @@
+# Carrier image for the extracted llama.cpp + ROCm bundle.
+#
+# It holds nothing but the bundle and an entrypoint that copies it onto a bind
+# mount — the same delivery pattern as the original llama-ROCmFPX image, whose
+# entrypoint dropped compiled llama-server binaries into a mounted folder for
+# llama-swap to use.
+#
+#   docker run --rm -v /mnt/user/appdata/llama-swap/llama-ROCmFPX:/output \
+#     ghcr.io/xpsixx/llama-rocmfpx:rdna-latest
+#
+# busybox (not scratch) because the entrypoint needs /bin/sh + cp; it adds ~4 MB
+# against a ~3 GB payload.
+FROM busybox:stable
+
+COPY bundle/ /bundle/
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENV OUTPUT_DIR=/output
+ENV MODE=copy
+
+ENTRYPOINT ["/entrypoint.sh"]

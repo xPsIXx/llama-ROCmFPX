@@ -1,0 +1,158 @@
+name: Bundle carrier image
+
+# Wraps the extracted bundle in a run-once "carrier" image and publishes it to
+# GHCR. Running the image with a bind mount copies the patched llama.cpp + ROCm
+# runtime onto that mount, which is how llama-swap gets the HIP build without a
+# second ROCm container — the same delivery pattern as the old llama-ROCmFPX
+# image that dropped statically-linked llama-server binaries into a mount.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'      # Mondays 06:00 UTC, an hour after the bundle job
+  workflow_dispatch:
+    inputs:
+      rocm_line:
+        description: 'ROCm line (10.2 or 7.14.1)'
+        default: '10.2'
+        required: false
+      gfx:
+        description: 'Target GPU ISA'
+        default: 'gfx1201'
+        required: false
+      release:
+        description: 'Force a specific bundle release (empty = latest)'
+        default: ''
+        required: false
+      force:
+        description: 'Rebuild even if the GHCR tag already exists'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile.bundle'
+      - 'entrypoint.sh'
+      - '.github/workflows/bundle-image.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  ROCM_LINE: ${{ github.event.inputs.rocm_line || '10.2' }}
+  GFX: ${{ github.event.inputs.gfx || 'gfx1201' }}
+  FORCED_RELEASE: ${{ github.event.inputs.release || '' }}
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve bundle release
+        id: rel
+        run: |
+          set -euo pipefail
+          if [ -n "$FORCED_RELEASE" ]; then
+            REL="$FORCED_RELEASE"
+          else
+            REL=$(curl -fsSL https://raw.githubusercontent.com/stew675/llama-cpp-rdna-boosts/main/release.json \
+                  | python3 -c 'import json,sys; print(json.load(sys.stdin)["release"])')
+          fi
+          ASSET="rdna-boosts-${GFX}-rocm${ROCM_LINE}-${REL}"
+          echo "release=$REL"  >> "$GITHUB_OUTPUT"
+          echo "asset=$ASSET"  >> "$GITHUB_OUTPUT"
+          echo "resolved $ASSET"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for an existing image tag
+        id: gate
+        run: |
+          set +e
+          docker buildx imagetools inspect "${IMAGE}:rdna-${{ steps.rel.outputs.release }}" >/dev/null 2>&1
+          EXISTS=$?
+          set -e
+          if [ "$EXISTS" -eq 0 ] && [ "${{ github.event.inputs.force }}" != "true" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "image tag rdna-${{ steps.rel.outputs.release }} already published — nothing to do"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch the bundle
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          ASSET="${{ steps.rel.outputs.asset }}"
+          URL="https://github.com/${{ github.repository }}/releases/download/${ASSET}/${ASSET}.tar.gz"
+          if curl -fsSL -o bundle.tar.gz "$URL"; then
+            curl -fsSL -o bundle.tar.gz.sha256 "$URL.sha256" || true
+            if [ -s bundle.tar.gz.sha256 ]; then
+              sha256sum -c bundle.tar.gz.sha256 || { echo "checksum mismatch"; exit 1; }
+            fi
+            echo "downloaded prebuilt bundle from the release"
+          else
+            echo "no release asset yet — extracting from the upstream image instead"
+            docker pull "ghcr.io/stew675/llama-cpp-rdna-boosts:server-rocm-${ROCM_LINE}-${{ steps.rel.outputs.release }}" >/dev/null
+            ROCM_LINE="$ROCM_LINE" GFX="$GFX" RELEASE="${{ steps.rel.outputs.release }}" OUT=bundle ./extract.sh
+            tar -czf bundle.tar.gz bundle
+          fi
+          mkdir -p bundle
+          tar -xzf bundle.tar.gz
+          # tolerate archives that contain a leading ./bundle/ directory
+          if [ ! -x bundle/app/llama-server ] && [ -x ./bundle/bundle/app/llama-server ]; then
+            mv ./bundle/bundle/* ./bundle/
+          fi
+          [ -x bundle/app/llama-server ] || { echo "llama-server missing from bundle"; exit 1; }
+          du -sh bundle
+          cat bundle/manifest.json
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.gate.outputs.build == 'true'
+
+      - name: Build and push carrier image
+        if: steps.gate.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.bundle
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:rdna-${{ steps.rel.outputs.release }}
+            ${{ env.IMAGE }}:rdna-latest
+          labels: |
+            org.opencontainers.image.title=llama.cpp + ROCm bundle (rdna-boosts)
+            org.opencontainers.image.description=Run once with a bind mount to copy the HIP llama.cpp build onto it
+            io.xpsixx.rdna.gfx=${{ env.GFX }}
+            io.xpsixx.rdna.rocm=${{ env.ROCM_LINE }}
+            io.xpsixx.rdna.release=${{ steps.rel.outputs.release }}
+
+      - name: Smoke-test the carrier entrypoint
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/out
+          docker run --rm -v /tmp/out:/output "${IMAGE}:rdna-${{ steps.rel.outputs.release }}"
+          [ -x /tmp/out/app/llama-server ] || { echo "entrypoint did not deliver llama-server"; exit 1; }
+          ls /tmp/out
+          du -sh /tmp/out
+          echo "entrypoint delivered the bundle onto the mount"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Bundle carrier image"
+            echo ""
+            echo "- bundle release: \`${{ steps.rel.outputs.release }}\`"
+            echo "- ISA / ROCm: \`${GFX}\` / \`${ROCM_LINE}\`"
+            echo "- image: \`${IMAGE}:rdna-${{ steps.rel.outputs.release }}\`"
+            echo "- built: ${{ steps.gate.outputs.build }}"
+          } >> "$GITHUB_STEP_SUMMARY"

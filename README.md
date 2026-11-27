@@ -68,29 +68,65 @@ llama-swap:vulkan) and additionally enumerates devices when `/dev/kfd` is presen
 
 ## Deploy
 
+### Option 1 — carrier image (run once, it copies onto your mount)
+
+Same pattern as the original llama-ROCmFPX image: the published image holds only
+the bundle, and its entrypoint copies everything onto a bind-mounted directory,
+so llama-swap finds the binary exactly where it expects:
+
 ```bash
-sudo mkdir -p /mnt/user/appdata/llama-swap/llama-rdna-boosts
-sudo tar -xzf rdna-boosts-gfx1201-rocm10.2-<release>.tar.gz -C /tmp
-sudo cp -a /tmp/bundle/. /mnt/user/appdata/llama-swap/llama-rdna-boosts/
+docker pull ghcr.io/xpsixx/llama-rocmfpx:rdna-latest
+docker run --rm -v /mnt/user/appdata/llama-swap/llama-ROCmFPX:/output \
+  ghcr.io/xpsixx/llama-rocmfpx:rdna-latest
+# → entrypoint: done — 3.1G in /output
 ```
 
-Mount it into your server container (`.../llama-rdna-boosts -> /app/llama-rdna-boosts`)
-and add a model entry:
+The payload lands beside any existing files in that mount, so a mount that
+already serves another build keeps working; the new build sits in
+`OUTPUT_DIR` (default `/output`, i.e. the mount root).
+
+Point `OUTPUT_DIR` at a subdirectory to keep it separate:
+
+```bash
+docker run --rm -e OUTPUT_DIR=/output/rdna \
+  -v /mnt/user/appdata/llama-swap/llama-ROCmFPX:/output \
+  ghcr.io/xpsixx/llama-rocmfpx:rdna-latest
+```
+
+Inspect the payload without writing anything:
+
+```bash
+docker run --rm -e MODE=verify ghcr.io/xpsixx/llama-rocmfpx:rdna-latest
+```
+
+### Option 2 — tarball from the release
+
+```bash
+curl -LO https://github.com/xPsIXx/llama-ROCmFPX/releases/download/<tag>/<tag>.tar.gz
+curl -LO https://github.com/xPsIXx/llama-ROCmFPX/releases/download/<tag>/<tag>.tar.gz.sha256
+sha256sum -c <tag>.tar.gz.sha256
+sudo tar -xzf <tag>.tar.gz -C /tmp
+sudo cp -a /tmp/bundle/. /mnt/user/appdata/llama-swap/llama-ROCmFPX/rdna/
+```
+
+### Then wire it into the server
+
+Whatever route you use, the launcher needs `LD_LIBRARY_PATH` pointing at **both**
+`app/` and `rocm/lib/`, and the container needs `/dev/kfd` + `/dev/dri`:
 
 ```yaml
-FlashNext-rdna:
-  cmd: /app/llama-rdna-boosts/app/llama-server --port ${PORT} --host 0.0.0.0
-       -m /models/Qwen3.8-Flash-Next-IQ3_XXS-00001-of-00002.gguf
-       --n-gpu-layers 999 --cpu-moe --moe-cache-mib 3072 --ctx-size 131072
-       --cache-type-k q8_0 --cache-type-v q8_0 --batch-size 2048 --ubatch-size 2048
-       -fa on --threads 8 --parallel 1 --metrics
-  env:
-    LD_LIBRARY_PATH: /app/llama-rdna-boosts/app:/app/llama-rdna-boosts/rocm/lib
+  FlashNext-HIP:
+    capabilities: {context: 131072, in: [text], out: [text], tools: true}
+    cmd: /app/llama-ROCmFPX/rdna/app/llama-server --port ${PORT} --host 0.0.0.0
+         -m /models/<model>.gguf --n-gpu-layers 99 --ctx-size 131072 -fa on
+    env:
+      - "LD_LIBRARY_PATH=/app/llama-ROCmFPX/rdna/app:/app/llama-ROCmFPX/rdna/rocm/lib"
 ```
 
-`LD_LIBRARY_PATH` must include **both** `app/` (llama's own libs) and `rocm/lib/`.
-If your orchestrator cannot set env vars per model, wrap the binary in a two-line
-shell script that exports `LD_LIBRARY_PATH` and `exec`s `llama-server`.
+`LD_LIBRARY_PATH` must include **both** trees (llama's own libs *and* the ROCm
+runtime). If your orchestrator cannot set env vars per model, wrap the binary in
+a two-line shell script that exports it and `exec`s `llama-server`.
+
 
 ## What gets trimmed
 
