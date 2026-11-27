@@ -11,13 +11,27 @@
 #
 # Knobs:
 #   OUTPUT_DIR   destination inside the container   (default /output)
+#   SUBDIR       subdirectory under OUTPUT_DIR      (default rdna)
+#                Set SUBDIR="" to write to the mount root instead. The default
+#                keeps this payload clear of whatever else lives in the mount
+#                (e.g. llama-rocmfpx-server binaries from the sibling image).
 #   MODE         copy | verify                      (default copy)
 #                verify prints the manifest and file list without writing
+#
+# Existing llama-ROCmFPX container definitions already carry
+# OUTPUT_DIR=/app/llama-ROCmFPX with that path bind-mounted, so running this
+# image in that container writes /app/llama-ROCmFPX/rdna — the layout llama-swap
+# entries reference.
 set -eu
 
 SRC="${SRC_DIR:-/bundle}"
 OUT="${OUTPUT_DIR:-/output}"
+SUBDIR="${SUBDIR-rdna}"
 MODE="${MODE:-copy}"
+
+if [ -n "$SUBDIR" ]; then
+  OUT="$OUT/$SUBDIR"
+fi
 
 [ -d "$SRC" ] || { echo "entrypoint: no bundle at $SRC"; exit 1; }
 [ -x "$SRC/app/llama-server" ] || { echo "entrypoint: $SRC/app/llama-server missing"; exit 1; }
@@ -35,10 +49,15 @@ fi
 
 mkdir -p "$OUT"
 
-# Warn loudly when OUTPUT_DIR is not a bind mount: the copy would vanish with
-# the container, which looks like a silent no-op to the caller.
-if ! grep -q " $OUT " /proc/mounts 2>/dev/null; then
-  echo "entrypoint: WARNING $OUT does not look like a mount point; the copy will"
+# Warn loudly when the mount root is not a bind mount: the copy would vanish with
+# the container, which looks like a silent no-op to the caller. Check the mount
+# root (OUTPUT_DIR), not the possibly-deeper SUBDIR.
+ROOT="${OUTPUT_DIR:-/output}"
+if [ -z "$SUBDIR" ]; then
+  ROOT="$OUT"
+fi
+if ! grep -q " $(printf '%s' "$ROOT" | sed 's/ /\\040/g') " /proc/mounts 2>/dev/null; then
+  echo "entrypoint: WARNING $ROOT does not look like a mount point; the copy will"
   echo "entrypoint: be discarded when this container exits. Pass -v <host dir>:/output"
 fi
 

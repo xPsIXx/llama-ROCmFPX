@@ -159,11 +159,12 @@ jobs:
         if: steps.gate.outputs.build == 'true'
         run: |
           set -euo pipefail
-          mkdir -p /tmp/out
+          rm -rf /tmp/out && mkdir -p /tmp/out
           docker run --rm -v /tmp/out:/output "${{ steps.img.outputs.tag }}"
-          [ -x /tmp/out/app/llama-server ] || { echo "entrypoint did not deliver llama-server"; exit 1; }
-          du -sh /tmp/out
-          echo "entrypoint delivered the bundle onto the mount"
+          # default SUBDIR=rdna, so the payload lands in <mount>/rdna
+          [ -x /tmp/out/rdna/app/llama-server ] || { echo "entrypoint did not deliver llama-server"; find /tmp/out -maxdepth 3 | head -20; exit 1; }
+          du -sh /tmp/out/rdna
+          echo "entrypoint delivered the bundle onto the mount at <mount>/rdna"
 
       - name: Summary
         run: |

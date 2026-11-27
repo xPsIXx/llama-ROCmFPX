@@ -72,28 +72,31 @@ llama-swap:vulkan) and additionally enumerates devices when `/dev/kfd` is presen
 
 Same pattern as the original llama-ROCmFPX image: the published image holds only
 the bundle, and its entrypoint copies everything onto a bind-mounted directory,
-so llama-swap finds the binary exactly where it expects:
+so llama-swap finds the binary exactly where it expects.
+
+An existing llama-ROCmFPX container definition already carries
+`OUTPUT_DIR=/app/llama-ROCmFPX` with that path bind-mounted, so pointing its image
+at this tag is all that changes — the payload lands in
+`/app/llama-ROCmFPX/rdna` (`SUBDIR` defaults to `rdna`):
 
 ```bash
 docker pull ghcr.io/xpsixx/llama-rocmfpx:rdna-latest
-docker run --rm -v /mnt/user/appdata/llama-swap/llama-ROCmFPX:/output \
+docker run --rm -v /mnt/user/appdata/llama-swap/llama-ROCmFPX:/app/llama-ROCmFPX \
+  -e OUTPUT_DIR=/app/llama-ROCmFPX \
   ghcr.io/xpsixx/llama-rocmfpx:rdna-latest
-# → entrypoint: done — 3.1G in /output
+# → entrypoint: done — 3.1G in /app/llama-ROCmFPX/rdna
 ```
 
-The payload lands beside any existing files in that mount, so a mount that
-already serves another build keeps working; the new build sits in
-`OUTPUT_DIR` (default `/output`, i.e. the mount root).
-
-Point `OUTPUT_DIR` at a subdirectory to keep it separate:
+Standalone, without reusing that container:
 
 ```bash
-docker run --rm -e OUTPUT_DIR=/output/rdna \
-  -v /mnt/user/appdata/llama-swap/llama-ROCmFPX:/output \
+docker run --rm -v /mnt/user/appdata/llama-swap/llama-ROCmFPX:/output \
   ghcr.io/xpsixx/llama-rocmfpx:rdna-latest
+# → <mount>/rdna, beside the llama-rocmfpx-* binaries already there
 ```
 
-Inspect the payload without writing anything:
+`SUBDIR=""` writes to the mount root instead. `MODE=verify` prints the payload
+without writing anything:
 
 ```bash
 docker run --rm -e MODE=verify ghcr.io/xpsixx/llama-rocmfpx:rdna-latest
