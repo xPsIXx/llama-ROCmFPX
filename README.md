@@ -94,16 +94,45 @@ shell script that exports `LD_LIBRARY_PATH` and `exec`s `llama-server`.
 
 ## What gets trimmed
 
+Measured on `gfx1201` / ROCm 10.2 (`v18-919794500-r368`):
+
 | Component | Full image | Bundle |
 |---|---|---|
 | llama.cpp binaries | ~2 GB (all ISA kernels embedded in `libggml-hip.so`) | same — cannot be trimmed |
-| ROCm soname closure | 22 GB tree | ~0.7 GB (48–130 libs, incl. `librocm_sysdeps_*` shims) |
-| rocBLAS kernels | 803 MB (every ISA) | ~11 MB (`gfx1201` + index files) |
-| hipBLASLt kernels | 2.4 GB (every ISA) | ~163 MB (`gfx1201` + optional fallback ISA) |
+| ROCm soname closure | 22 GB tree | ~0.5 GB (28 real libs + ~127 soname symlinks, incl. the `librocm_sysdeps_*` shims) |
+| rocBLAS kernels | 803 MB (every ISA) | ~0.5 GB (`gfx1201` only: `.hsaco`, `.co`, `.dat` + index files) |
+| hipBLASLt kernels | 2.4 GB (every ISA) | ~0.16 GB (`gfx1201`) |
+| **total** | — | **~3.1 GB** |
 
+Set `GFX_FALLBACK=gfx1200` to keep a second ISA's hipBLASLt kernels (adds ~0.2 GB).
 `libggml-hip.so` is the one irreducible piece: it carries code objects for every
 targeted GPU family. Rebuild from source with a single `AMDGPU_TARGETS` entry if
 size matters more than build time.
+
+## Troubleshooting
+
+- **`not found` for `librocblas.so.5` but the file `librocblas.so.5.8` is present** —
+  the bundle lost its soname symlinks. `docker cp -L` copies real files only; the
+  loader needs the `soname → realfile` aliases, which `extract.sh` recreates.
+- **`libggml-hip.so` misses `librocm_sysdeps_*` / `librocsolver` / `libomp`** — the
+  closure was computed non-recursively. Those are transitive deps living in
+  `lib/rocm_sysdeps/lib` and `lib/llvm/lib`; the walk must follow `ldd` of every
+  discovered library, not just the top-level binaries.
+- **A foreign ISA's kernels survive pruning** — Tensile archives come as `.hsaco`,
+  `.co` *and* `.dat`; prune on the `gfx` substring, never on one extension.
+- **`verify.sh` reports the binary missing while it exists** — the path passed to
+  `docker -v` must be one the *host* can see. Set `HOST_BUNDLE` when running from a
+  container/agent workspace whose paths are not host paths.
+- **`ldd` says everything resolves but generation fails** — the target container's
+  glibc is too old. Check `ldd --version` (needs ≥ 2.38) and `libstdc++` (≥ 3.4.32).
+
+## Verified
+
+`extract.sh` + `verify.sh` were run against `server-rocm-10.2-v18-919794500-r368`
+with `GFX=gfx1201`, deployed into `ghcr.io/mostlygeek/llama-swap:vulkan` (which has
+no ROCm at all) on an RX 9070 host: all shared libraries resolved and
+`llama-server --list-devices` reported
+`ROCm0: AMD Radeon RX 9070 (gfx1201) (16304 MiB)`.
 
 ## Weekly CI
 
