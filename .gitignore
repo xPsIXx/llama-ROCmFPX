@@ -1,0 +1,6 @@
+bundle/
+*.tar.gz
+*.tar.gz.sha256
+deploy_key
+deploy_key.pub
+.env

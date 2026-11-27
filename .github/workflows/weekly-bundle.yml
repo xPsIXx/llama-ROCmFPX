@@ -1,0 +1,147 @@
+name: Weekly RDNA bundle
+
+# Rebuilds the extracted llama.cpp + ROCm bundle whenever a new
+# llama-cpp-rdna-boosts release appears upstream, plus a weekly safety net.
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'      # Mondays 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      rocm_line:
+        description: 'ROCm line (10.2 or 7.14.1; 10.1 is retired)'
+        default: '10.2'
+        required: false
+      gfx:
+        description: 'Target GPU ISA (gfx1201 = RX 9070, gfx1100, gfx1151, ...)'
+        default: 'gfx1201'
+        required: false
+      release:
+        description: 'Force a specific release id (e.g. v18-919794500-r368); empty = latest'
+        default: ''
+        required: false
+      force:
+        description: 'Rebuild even if a release asset for this upstream release exists'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write        # create releases
+  packages: read
+
+env:
+  ROCM_LINE: ${{ github.event.inputs.rocm_line || '10.2' }}
+  GFX: ${{ github.event.inputs.gfx || 'gfx1201' }}
+  FORCED_RELEASE: ${{ github.event.inputs.release || '' }}
+  TARGET_IMAGE: ghcr.io/mostlygeek/llama-swap:vulkan
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub runners ship with a small working disk; the ROCm image unpacks to
+      # ~22 GB. Strip preinstalled toolchains we do not use before pulling.
+      - name: Free disk space
+        run: |
+          set -x
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af || true
+          df -h /
+
+      - name: Resolve upstream release
+        id: rel
+        run: |
+          set -euo pipefail
+          if [ -n "$FORCED_RELEASE" ]; then
+            REL="$FORCED_RELEASE"
+          else
+            REL=$(curl -fsSL https://raw.githubusercontent.com/stew675/llama-cpp-rdna-boosts/main/release.json \
+                  | python3 -c 'import json,sys; print(json.load(sys.stdin)["release"])')
+          fi
+          TAG="server-rocm-${ROCM_LINE}-${REL}"
+          echo "release=$REL"     >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          AGG="rdna-boosts-${GFX}-rocm${ROCM_LINE}-${REL}"
+          echo "asset=$AGG"       >> "$GITHUB_OUTPUT"
+          echo "resolved $AGG"
+
+      - name: Skip if this release is already published
+        id: gate
+        run: |
+          if gh release view "$ASSET" >/dev/null 2>&1 && [ "${{ github.event.inputs.force }}" != "true" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "release $ASSET already published — nothing to do"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASSET: ${{ steps.rel.outputs.asset }}
+
+      - name: Extract bundle
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          chmod +x extract.sh
+          ROCM_LINE="$ROCM_LINE" GFX="$GFX" RELEASE="${{ steps.rel.outputs.release }}" \
+            OUT=bundle ./extract.sh
+
+      - name: Verify bundle loads in a ROCm-less container
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          chmod +x verify.sh
+          TARGET_IMAGE="$TARGET_IMAGE" ./verify.sh bundle
+
+      - name: Package
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          ASSET="${{ steps.rel.outputs.asset }}"
+          tar -czf "${ASSET}.tar.gz" bundle
+          sha256sum "${ASSET}.tar.gz" > "${ASSET}.tar.gz.sha256"
+          cat "${ASSET}.tar.gz.sha256"
+          ls -lh "${ASSET}.tar.gz"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.build == 'true'
+        with:
+          name: ${{ steps.rel.outputs.asset }}
+          path: |
+            *.tar.gz
+            *.sha256
+            bundle/manifest.json
+          retention-days: 30
+
+      - name: Publish release
+        if: steps.gate.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ASSET="${{ steps.rel.outputs.asset }}"
+          REL="${{ steps.rel.outputs.release }}"
+          if gh release view "$ASSET" >/dev/null 2>&1; then
+            gh release upload "$ASSET" "${ASSET}.tar.gz" "${ASSET}.tar.gz.sha256" --clobber
+          else
+            gh release create "$ASSET" \
+              "${ASSET}.tar.gz" "${ASSET}.tar.gz.sha256" \
+              --title "RDNA bundle ${RELEASE_DISPLAY}" \
+              --notes "$(cat bundle/manifest.json | head -40)" \
+              --prerelease
+          fi
+        env:
+          RELEASE_DISPLAY: ${{ steps.rel.outputs.tag }}
+
+      - name: Summary
+        run: |
+          {
+            echo "## RDNA bundle"
+            echo ""
+            echo "- upstream release: \`${{ steps.rel.outputs.release }}\`"
+            echo "- image: \`server-rocm-${ROCM_LINE}-${{ steps.rel.outputs.release }}\`"
+            echo "- ISA: \`${GFX}\`"
+            echo "- built: ${{ steps.gate.outputs.build }}"
+          } >> "$GITHUB_STEP_SUMMARY"
