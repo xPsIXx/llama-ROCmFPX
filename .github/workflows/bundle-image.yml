@@ -99,7 +99,13 @@ jobs:
           docker buildx imagetools inspect "${{ steps.img.outputs.tag }}" >/dev/null 2>&1
           EXISTS=$?
           set -e
-          if [ "$EXISTS" -eq 0 ] && [ "${{ github.event.inputs.force }}" != "true" ]; then
+          # A push means Dockerfile.bundle / entrypoint.sh / this workflow changed,
+          # so the image MUST be rebuilt even though the tag already exists.
+          # Schedule/dispatch runs skip when the tag is already published.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "triggered by push: rebuilding ${{ steps.img.outputs.tag }}"
+          elif [ "$EXISTS" -eq 0 ] && [ "${{ github.event.inputs.force }}" != "true" ]; then
             echo "build=false" >> "$GITHUB_OUTPUT"
             echo "${{ steps.img.outputs.tag }} already published — nothing to do"
           else
